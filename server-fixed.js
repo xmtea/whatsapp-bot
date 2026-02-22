@@ -96,6 +96,9 @@ async function handleInteractive(phoneNumber, replyId) {
     await sendRestaurantList(phoneNumber);
   } else if (replyId.startsWith('business_')) {
     await sendCategories(phoneNumber);
+  } else if (replyId.startsWith('cat_')) {
+    // Kategori seçildi, ürünleri göster
+    await sendProducts(phoneNumber, replyId);
   } else {
     await sendMainMenu(phoneNumber);
   }
@@ -192,6 +195,73 @@ async function sendRestaurantList(phoneNumber) {
               description: 'İtalyan Mutfağı'
             }
           ]
+        }]
+      }
+    }
+  };
+  
+  return await sendToWhatsApp(data);
+}
+
+// ÜRÜNLER
+async function sendProducts(phoneNumber, categoryId) {
+  console.log('📤 Ürünler gönderiliyor...', categoryId);
+  
+  // Kategoriye göre ürünler
+  const products = {
+    'cat_kebap': {
+      title: '🍖 Kebaplar',
+      items: [
+        { id: 'prod_adana', title: 'Adana Kebap', description: 'Acılı kıyma - 150₺', price: 150 },
+        { id: 'prod_urfa', title: 'Urfa Kebap', description: 'Acısız kıyma - 150₺', price: 150 },
+        { id: 'prod_beyti', title: 'Beyti Kebap', description: 'Lavash sarma - 180₺', price: 180 }
+      ]
+    },
+    'cat_burger': {
+      title: '🍔 Hamburgerler',
+      items: [
+        { id: 'prod_classic', title: 'Klasik Burger', description: 'Marul, domates, soğan - 120₺', price: 120 },
+        { id: 'prod_cheese', title: 'Cheeseburger', description: 'Cheddar peynirli - 140₺', price: 140 },
+        { id: 'prod_double', title: 'Double Burger', description: 'Çift köfte - 180₺', price: 180 }
+      ]
+    },
+    'cat_drink': {
+      title: '🥤 İçecekler',
+      items: [
+        { id: 'prod_cola', title: 'Coca Cola', description: '330ml - 25₺', price: 25 },
+        { id: 'prod_fanta', title: 'Fanta', description: '330ml - 25₺', price: 25 },
+        { id: 'prod_ayran', title: 'Ayran', description: '250ml - 15₺', price: 15 }
+      ]
+    }
+  };
+  
+  const category = products[categoryId] || products['cat_kebap'];
+  
+  const data = {
+    messaging_product: 'whatsapp',
+    to: phoneNumber,
+    type: 'interactive',
+    interactive: {
+      type: 'list',
+      header: {
+        type: 'text',
+        text: category.title
+      },
+      body: {
+        text: 'Ürün seçin ve sepete ekleyin:'
+      },
+      footer: {
+        text: 'Fiyatlar KDV dahil'
+      },
+      action: {
+        button: 'Ürünler',
+        sections: [{
+          title: 'Menü',
+          rows: category.items.map(item => ({
+            id: item.id,
+            title: item.title,
+            description: item.description
+          }))
         }]
       }
     }
