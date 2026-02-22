@@ -1,4 +1,4 @@
-// WhatsApp Backend - FIXED VERSION
+// WhatsApp Backend - WORKING VERSION
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
@@ -13,9 +13,7 @@ const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const API_URL = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
 
-console.log('🚀 WhatsApp Backend başlatılıyor (FIXED)...');
-console.log('📱 Phone Number ID:', PHONE_NUMBER_ID);
-console.log('🔑 Access Token:', ACCESS_TOKEN ? '✅ Mevcut' : '❌ Eksik');
+console.log('🚀 WhatsApp Backend başlatılıyor...');
 
 // WEBHOOK VERIFICATION
 app.get('/webhook', (req, res) => {
@@ -35,8 +33,6 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', async (req, res) => {
   const body = req.body;
   
-  console.log('📱 Webhook alındı');
-  
   if (body.object === 'whatsapp_business_account') {
     body.entry?.forEach(entry => {
       entry.changes?.forEach(change => {
@@ -49,16 +45,14 @@ app.post('/webhook', async (req, res) => {
             const interactive = message.interactive;
             
             console.log('👤 Gönderen:', phoneNumber);
-            console.log('📝 Mesaj:', messageText);
             
             try {
               if (interactive) {
-                // Interactive yanıt
                 const replyId = interactive.list_reply?.id || interactive.button_reply?.id;
                 console.log('🎯 Interactive:', replyId);
                 await handleInteractive(phoneNumber, replyId);
               } else if (messageText) {
-                // Text mesaj
+                console.log('📝 Mesaj:', messageText);
                 await handleMessage(phoneNumber, messageText);
               }
             } catch (error) {
@@ -79,12 +73,8 @@ app.post('/webhook', async (req, res) => {
 async function handleMessage(phoneNumber, text) {
   const lowerText = text.toLowerCase();
   
-  console.log('🤖 İşleniyor:', lowerText);
-  
-  if (lowerText.includes('merhaba') || lowerText.includes('selam') || lowerText.includes('menu')) {
+  if (lowerText.includes('merhaba') || lowerText.includes('selam')) {
     await sendMainMenu(phoneNumber);
-  } else if (lowerText.includes('sipariş') || lowerText.includes('siparis')) {
-    await sendRestaurantList(phoneNumber);
   } else {
     await sendMainMenu(phoneNumber);
   }
@@ -92,145 +82,161 @@ async function handleMessage(phoneNumber, text) {
 
 // INTERACTIVE İŞLEYİCİ
 async function handleInteractive(phoneNumber, replyId) {
+  console.log('🔥 Handler çalıştı, ID:', replyId);
+  
+  // Restoran listesi
   if (replyId === 'action_new_order' || replyId === 'menu_all') {
+    console.log('→ Restoran listesi gönderiliyor');
     await sendRestaurantList(phoneNumber);
-  } else if (replyId.startsWith('business_')) {
+    return;
+  }
+  
+  // Kategoriler
+  if (replyId === 'business_lezzet' || replyId === 'business_burger' || replyId === 'business_pizza') {
+    console.log('→ Kategoriler gönderiliyor');
     await sendCategories(phoneNumber);
-  } else if (replyId.startsWith('cat_')) {
-    // Kategori seçildi, ürünleri göster
+    return;
+  }
+  
+  // ÜRÜNLER
+  if (replyId === 'cat_kebap' || replyId === 'cat_burger' || replyId === 'cat_drink') {
+    console.log('→ ÜRÜNLER GÖNDERİLİYOR!');
     await sendProducts(phoneNumber, replyId);
-  } else {
-    await sendMainMenu(phoneNumber);
+    return;
+  }
+  
+  // Varsayılan
+  console.log('→ Ana menü (default)');
+  await sendMainMenu(phoneNumber);
+}
+
+// WHATSAPP'A GÖNDER
+async function sendToWhatsApp(data) {
+  try {
+    const response = await axios.post(API_URL, data, {
+      headers: {
+        'Authorization': `Bearer ${ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    console.log('✅ Mesaj gönderildi!');
+    return response.data;
+  } catch (error) {
+    console.error('❌ Gönderim hatası:', error.response?.data || error.message);
+    throw error;
   }
 }
 
-// ANA MENÜ GÖNDER
+// ANA MENÜ
 async function sendMainMenu(phoneNumber) {
-  console.log('📤 Ana menü gönderiliyor...');
-  
   const data = {
     messaging_product: 'whatsapp',
     to: phoneNumber,
     type: 'interactive',
     interactive: {
       type: 'list',
-      header: {
-        type: 'text',
-        text: '🍽️ Menüm Yanımda'
-      },
-      body: {
-        text: 'Hoş geldiniz! Ne yapmak istersiniz?'
-      },
-      footer: {
-        text: 'Lütfen bir işlem seçin'
-      },
+      header: { type: 'text', text: '🍽️ Menüm Yanımda' },
+      body: { text: 'Hoş geldiniz! Ne yapmak istersiniz?' },
+      footer: { text: 'Lütfen bir işlem seçin' },
       action: {
         button: 'Menü',
         sections: [{
           title: 'Sipariş İşlemleri',
           rows: [
-            {
-              id: 'action_new_order',
-              title: '🛒 Sipariş Ver',
-              description: 'Yeni sipariş oluştur'
-            },
-            {
-              id: 'action_orders',
-              title: '📦 Siparişlerim',
-              description: 'Geçmiş siparişler'
-            }
+            { id: 'action_new_order', title: '🛒 Sipariş Ver', description: 'Yeni sipariş oluştur' },
+            { id: 'action_orders', title: '📦 Siparişlerim', description: 'Geçmiş siparişler' }
           ]
         }, {
           title: 'Restoranlar',
           rows: [
-            {
-              id: 'menu_all',
-              title: '📋 Tüm Restoranlar',
-              description: 'Restoran listesi'
-            }
+            { id: 'menu_all', title: '📋 Tüm Restoranlar', description: 'Restoran listesi' }
           ]
         }]
       }
     }
   };
-  
   return await sendToWhatsApp(data);
 }
 
 // RESTORAN LİSTESİ
 async function sendRestaurantList(phoneNumber) {
-  console.log('📤 Restoran listesi gönderiliyor...');
-  
   const data = {
     messaging_product: 'whatsapp',
     to: phoneNumber,
     type: 'interactive',
     interactive: {
       type: 'list',
-      header: {
-        type: 'text',
-        text: '🍽️ Restoranlar'
-      },
-      body: {
-        text: 'Sipariş vermek istediğiniz restoranı seçin:'
-      },
+      header: { type: 'text', text: '🍽️ Restoranlar' },
+      body: { text: 'Sipariş vermek istediğiniz restoranı seçin:' },
       action: {
         button: 'Restoran Seç',
         sections: [{
           title: 'Popüler Yerler',
           rows: [
-            {
-              id: 'business_lezzet',
-              title: '🍖 Lezzet Durağı',
-              description: 'Kebap & Türk Mutfağı'
-            },
-            {
-              id: 'business_burger',
-              title: '🍔 Burger House',
-              description: 'Hamburger & Fast Food'
-            },
-            {
-              id: 'business_pizza',
-              title: '🍕 Roma Pizza',
-              description: 'İtalyan Mutfağı'
-            }
+            { id: 'business_lezzet', title: '🍖 Lezzet Durağı', description: 'Kebap & Türk Mutfağı' },
+            { id: 'business_burger', title: '🍔 Burger House', description: 'Hamburger & Fast Food' },
+            { id: 'business_pizza', title: '🍕 Roma Pizza', description: 'İtalyan Mutfağı' }
           ]
         }]
       }
     }
   };
-  
+  return await sendToWhatsApp(data);
+}
+
+// KATEGORİLER
+async function sendCategories(phoneNumber) {
+  const data = {
+    messaging_product: 'whatsapp',
+    to: phoneNumber,
+    type: 'interactive',
+    interactive: {
+      type: 'list',
+      header: { type: 'text', text: '📋 Kategoriler' },
+      body: { text: 'Kategori seçin:' },
+      action: {
+        button: 'Kategoriler',
+        sections: [{
+          title: 'Menü',
+          rows: [
+            { id: 'cat_kebap', title: '🍖 Kebaplar', description: 'Izgara kebap çeşitleri' },
+            { id: 'cat_burger', title: '🍔 Hamburgerler', description: 'Burger menü' },
+            { id: 'cat_drink', title: '🥤 İçecekler', description: 'Soğuk içecekler' }
+          ]
+        }]
+      }
+    }
+  };
   return await sendToWhatsApp(data);
 }
 
 // ÜRÜNLER
 async function sendProducts(phoneNumber, categoryId) {
-  console.log('📤 Ürünler gönderiliyor...', categoryId);
+  console.log('📤 Ürünler gönderiliyor:', categoryId);
   
-  // Kategoriye göre ürünler
   const products = {
     'cat_kebap': {
       title: '🍖 Kebaplar',
       items: [
-        { id: 'prod_adana', title: 'Adana Kebap', description: 'Acılı kıyma - 150₺', price: 150 },
-        { id: 'prod_urfa', title: 'Urfa Kebap', description: 'Acısız kıyma - 150₺', price: 150 },
-        { id: 'prod_beyti', title: 'Beyti Kebap', description: 'Lavash sarma - 180₺', price: 180 }
+        { id: 'prod_adana', title: 'Adana Kebap', description: 'Acılı kıyma - 150₺' },
+        { id: 'prod_urfa', title: 'Urfa Kebap', description: 'Acısız kıyma - 150₺' },
+        { id: 'prod_beyti', title: 'Beyti Kebap', description: 'Lavash sarma - 180₺' }
       ]
     },
     'cat_burger': {
       title: '🍔 Hamburgerler',
       items: [
-        { id: 'prod_classic', title: 'Klasik Burger', description: 'Marul, domates, soğan - 120₺', price: 120 },
-        { id: 'prod_cheese', title: 'Cheeseburger', description: 'Cheddar peynirli - 140₺', price: 140 },
-        { id: 'prod_double', title: 'Double Burger', description: 'Çift köfte - 180₺', price: 180 }
+        { id: 'prod_classic', title: 'Klasik Burger', description: 'Marul, domates - 120₺' },
+        { id: 'prod_cheese', title: 'Cheeseburger', description: 'Cheddar peynirli - 140₺' },
+        { id: 'prod_double', title: 'Double Burger', description: 'Çift köfte - 180₺' }
       ]
     },
     'cat_drink': {
       title: '🥤 İçecekler',
       items: [
-        { id: 'prod_cola', title: 'Coca Cola', description: '330ml - 25₺', price: 25 },
-        { id: 'prod_fanta', title: 'Fanta', description: '330ml - 25₺', price: 25 },
-        { id: 'prod_ayran', title: 'Ayran', description: '250ml - 15₺', price: 15 }
+        { id: 'prod_cola', title: 'Coca Cola', description: '330ml - 25₺' },
+        { id: 'prod_fanta', title: 'Fanta', description: '330ml - 25₺' },
+        { id: 'prod_ayran', title: 'Ayran', description: '250ml - 15₺' }
       ]
     }
   };
@@ -243,116 +249,28 @@ async function sendProducts(phoneNumber, categoryId) {
     type: 'interactive',
     interactive: {
       type: 'list',
-      header: {
-        type: 'text',
-        text: category.title
-      },
-      body: {
-        text: 'Ürün seçin ve sepete ekleyin:'
-      },
-      footer: {
-        text: 'Fiyatlar KDV dahil'
-      },
+      header: { type: 'text', text: category.title },
+      body: { text: 'Ürün seçin:' },
+      footer: { text: 'Fiyatlar KDV dahil' },
       action: {
         button: 'Ürünler',
         sections: [{
           title: 'Menü',
-          rows: category.items.map(item => ({
-            id: item.id,
-            title: item.title,
-            description: item.description
-          }))
+          rows: category.items
         }]
       }
     }
   };
   
   return await sendToWhatsApp(data);
-}
-
-// KATEGORİLER
-async function sendCategories(phoneNumber) {
-  console.log('📤 Kategoriler gönderiliyor...');
-  
-  const data = {
-    messaging_product: 'whatsapp',
-    to: phoneNumber,
-    type: 'interactive',
-    interactive: {
-      type: 'list',
-      header: {
-        type: 'text',
-        text: '📋 Kategoriler'
-      },
-      body: {
-        text: 'Kategori seçin:'
-      },
-      action: {
-        button: 'Kategoriler',
-        sections: [{
-          title: 'Menü',
-          rows: [
-            {
-              id: 'cat_kebap',
-              title: '🍖 Kebaplar',
-              description: 'Izgara kebap çeşitleri'
-            },
-            {
-              id: 'cat_burger',
-              title: '🍔 Hamburgerler',
-              description: 'Burger menü'
-            },
-            {
-              id: 'cat_drink',
-              title: '🥤 İçecekler',
-              description: 'Soğuk içecekler'
-            }
-          ]
-        }]
-      }
-    }
-  };
-  
-  return await sendToWhatsApp(data);
-}
-
-// WHATSAPP'A GÖNDER
-async function sendToWhatsApp(data) {
-  try {
-    const response = await axios.post(API_URL, data, {
-      headers: {
-        'Authorization': `Bearer ${ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    console.log('✅ Mesaj gönderildi!', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('❌ Gönderim hatası:', error.response?.data || error.message);
-    throw error;
-  }
 }
 
 // ANA SAYFA
 app.get('/', (req, res) => {
-  res.send(`
-    <h1>🚀 WhatsApp Bot Çalışıyor! (FIXED)</h1>
-    <p>✅ Interactive Messages Aktif</p>
-    <p>📱 WhatsApp'tan "merhaba" yazın</p>
-  `);
+  res.send('<h1>🚀 WhatsApp Bot Çalışıyor!</h1><p>✅ Interactive Messages Aktif</p>');
 });
 
 // SERVER BAŞLAT
 app.listen(PORT, () => {
-  console.log('');
-  console.log('═══════════════════════════════════════════');
-  console.log('🎉 SERVER BAŞLATILDI! (FIXED VERSION)');
-  console.log('═══════════════════════════════════════════');
-  console.log(`📍 http://localhost:${PORT}`);
-  console.log(`📱 Webhook: /webhook`);
-  console.log('');
-  console.log('💡 WhatsApp\'tan "merhaba" yazın!');
-  console.log('═══════════════════════════════════════════');
-  console.log('');
+  console.log(`🎉 Server başladı: http://localhost:${PORT}`);
 });
