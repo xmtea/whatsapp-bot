@@ -476,12 +476,39 @@ async function showOrderSummary(phoneNumber) {
 // ============================================
 async function confirmOrder(phoneNumber) {
   const order = userOrders[phoneNumber];
+  const cart = userCarts[phoneNumber];
   
   if (!order || !order.orderNo) {
     await sendTextMessage(phoneNumber, '❌ Sipariş bulunamadı.');
     return;
   }
   
+  try {
+    // API'ye siparişi kaydet
+    const API_URL = process.env.API_BASE_URL || 'https://whatsapp-bot-production.up.railway.app';
+    const BUSINESS_ID = process.env.BUSINESS_ID || '1';
+    
+    const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    await axios.post(`${API_URL}/api/orders`, {
+      businessId: BUSINESS_ID,
+      orderNumber: order.orderNo,
+      customerPhone: phoneNumber,
+      customerName: 'WhatsApp Müşteri',
+      items: cart,
+      total: total,
+      payment: getPaymentName(order.payment),
+      address: order.address
+    });
+    
+    console.log('✅ Sipariş API\'ye kaydedildi:', order.orderNo);
+    
+  } catch (error) {
+    console.error('❌ API hatası:', error.message);
+    // Hata olsa bile devam et (kullanıcı deneyimi için)
+  }
+  
+  // Kullanıcıya başarı mesajı gönder
   const confirmText = `✅ *Siparişiniz alındı!*\n\n` +
                      `📋 No: ${order.orderNo}\n` +
                      `⏱️ Tahmini: 30-45 dk\n\n` +
@@ -492,6 +519,18 @@ async function confirmOrder(phoneNumber) {
   // Sepeti ve siparişi temizle
   delete userCarts[phoneNumber];
   delete userOrders[phoneNumber];
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+function getPaymentName(paymentId) {
+  const payments = {
+    'payment_cash': 'Nakit',
+    'payment_card': 'Kredi Kartı',
+    'payment_meal': 'Yemek Kartı'
+  };
+  return payments[paymentId] || 'Nakit';
 }
 
 // ============================================
