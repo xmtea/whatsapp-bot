@@ -1,11 +1,13 @@
-// WhatsApp Backend - Complete Version with Cart, Payment & Admin
+// WhatsApp Backend - Complete with Admin API, CORS & Subscription System
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
+const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
 app.use(bodyParser.json());
+app.use(cors()); // CORS for admin panel
 app.use(express.static('public'));
 
 const PORT = process.env.PORT || 5000;
@@ -19,9 +21,45 @@ const carts = new Map();
 const orders = [];
 const userState = new Map();
 
-console.log('🚀 WhatsApp Backend başlatılıyor...');
+// RESTAURANT USERS (In production: use database)
+const restaurants = [
+  {
+    id: 'rest_lezzet',
+    name: 'Lezzet Durağı',
+    email: 'lezzet@example.com',
+    password: 'lezzet123',
+    businessId: 'business_lezzet',
+    subscription: 'premium'
+  },
+  {
+    id: 'rest_burger',
+    name: 'Burger House',
+    email: 'burger@example.com',
+    password: 'burger123',
+    businessId: 'business_burger',
+    subscription: 'basic'
+  },
+  {
+    id: 'rest_pizza',
+    name: 'Roma Pizza',
+    email: 'pizza@example.com',
+    password: 'pizza123',
+    businessId: 'business_pizza',
+    subscription: 'premium'
+  }
+];
 
-// WEBHOOK VERIFICATION
+// SUPER ADMIN
+const SUPER_ADMIN = {
+  email: 'admin@menumyanimda.com',
+  password: 'Admin2024!',
+  role: 'super_admin'
+};
+
+console.log('🚀 WhatsApp Backend + Admin API başlatılıyor...');
+
+// ==================== WEBHOOK ====================
+
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -35,7 +73,6 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// WEBHOOK MESSAGES
 app.post('/webhook', async (req, res) => {
   const body = req.body;
   
@@ -75,11 +112,216 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// TEXT MESAJ İŞLEYİCİ
+// ==================== ADMIN API ====================
+
+// LOGIN API
+app.post('/api/login', (req, res) => {
+  const { email, password } = req.body;
+  
+  console.log('🔐 Login attempt:', email);
+  
+  // Super Admin check
+  if (email === SUPER_ADMIN.email && password === SUPER_ADMIN.password) {
+    return res.json({
+      success: true,
+      user: {
+        id: 'super_admin',
+        email: SUPER_ADMIN.email,
+        name: 'Super Admin',
+        role: 'super_admin',
+        subscription: 'premium'
+      },
+      token: 'super_admin_token_' + Date.now()
+    });
+  }
+  
+  // Restaurant user check
+  const restaurant = restaurants.find(r => r.email === email && r.password === password);
+  
+  if (restaurant) {
+    return res.json({
+      success: true,
+      user: {
+        id: restaurant.id,
+        email: restaurant.email,
+        name: restaurant.name,
+        role: 'restaurant',
+        businessId: restaurant.businessId,
+        subscription: restaurant.subscription
+      },
+      token: 'rest_token_' + restaurant.id + '_' + Date.now()
+    });
+  }
+  
+  res.status(401).json({
+    success: false,
+    message: 'Email veya şifre hatalı'
+  });
+});
+
+// GET ORDERS
+app.get('/api/orders', (req, res) => {
+  const { businessId, status } = req.query;
+  
+  let filteredOrders = [...orders];
+  
+  // Filter by restaurant
+  if (businessId && businessId !== 'all') {
+    filteredOrders = filteredOrders.filter(o => o.businessId === businessId);
+  }
+  
+  // Filter by status
+  if (status && status !== 'all') {
+    filteredOrders = filteredOrders.filter(o => o.status === status);
+  }
+  
+  // Sort by date (newest first)
+  filteredOrders.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  
+  res.json({
+    success: true,
+    orders: filteredOrders,
+    total: filteredOrders.length
+  });
+});
+
+// GET ORDER BY ID
+app.get('/api/orders/:orderId', (req, res) => {
+  const { orderId } = req.params;
+  const order = orders.find(o => o.orderNumber === orderId);
+  
+  if (order) {
+    res.json({ success: true, order });
+  } else {
+    res.status(404).json({ success: false, message: 'Sipariş bulunamadı' });
+  }
+});
+
+// UPDATE ORDER STATUS
+app.put('/api/orders/:orderId/status', async (req, res) => {
+  const { orderId } = req.params;
+  const { status, note } = req.body;
+  
+  const order = orders.find(o => o.orderNumber === orderId);
+  
+  if (!order) {
+    return res.status(404).json({ success: false, message: 'Sipariş bulunamadı' });
+  }
+  
+  const validStatuses = ['Alındı', 'Hazırlanıyor', 'Yolda', 'Teslim Edildi', 'İptal'];
+  
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({ success: false, message: 'Geçersiz durum' });
+  }
+  
+  order.status = status;
+  order.statusHistory = order.statusHistory || [];
+  order.statusHistory.push({
+    status,
+    note,
+    timestamp: new Date().toISOString()
+  });
+  
+  console.log(`✅ Sipariş ${orderId} durumu: ${status}`);
+  
+  // Send WhatsApp notification to customer
+  try {
+    await sendOrderStatusUpdate(order.phone, order.orderNumber, status);
+  } catch (error) {
+    console.error('WhatsApp bildirim hatası:', error.message);
+  }
+  
+  res.json({
+    success: true,
+    message: 'Sipariş durumu güncellendi',
+    order
+  });
+});
+
+// GET STATISTICS
+app.get('/api/stats', (req, res) => {
+  const { businessId, period } = req.query;
+  
+  let filteredOrders = [...orders];
+  
+  if (businessId && businessId !== 'all') {
+    filteredOrders = filteredOrders.filter(o => o.businessId === businessId);
+  }
+  
+  // Date filter
+  const now = new Date();
+  if (period === 'today') {
+    filteredOrders = filteredOrders.filter(o => 
+      new Date(o.timestamp).toDateString() === now.toDateString()
+    );
+  } else if (period === 'week') {
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    filteredOrders = filteredOrders.filter(o => 
+      new Date(o.timestamp) >= weekAgo
+    );
+  } else if (period === 'month') {
+    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    filteredOrders = filteredOrders.filter(o => 
+      new Date(o.timestamp) >= monthAgo
+    );
+  }
+  
+  const stats = {
+    totalOrders: filteredOrders.length,
+    totalRevenue: filteredOrders.reduce((sum, o) => sum + o.total, 0),
+    averageOrder: filteredOrders.length > 0 
+      ? filteredOrders.reduce((sum, o) => sum + o.total, 0) / filteredOrders.length 
+      : 0,
+    statusBreakdown: {
+      'Alındı': filteredOrders.filter(o => o.status === 'Alındı').length,
+      'Hazırlanıyor': filteredOrders.filter(o => o.status === 'Hazırlanıyor').length,
+      'Yolda': filteredOrders.filter(o => o.status === 'Yolda').length,
+      'Teslim Edildi': filteredOrders.filter(o => o.status === 'Teslim Edildi').length,
+      'İptal': filteredOrders.filter(o => o.status === 'İptal').length
+    },
+    paymentBreakdown: {
+      'Nakit': filteredOrders.filter(o => o.payment.includes('Nakit')).length,
+      'Kredi Kartı': filteredOrders.filter(o => o.payment.includes('Kredi')).length,
+      'Yemek Kartı': filteredOrders.filter(o => o.payment.includes('Yemek')).length
+    }
+  };
+  
+  res.json({ success: true, stats });
+});
+
+// GET RESTAURANTS LIST (for super admin)
+app.get('/api/restaurants', (req, res) => {
+  res.json({
+    success: true,
+    restaurants: restaurants.map(r => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      businessId: r.businessId,
+      subscription: r.subscription
+    }))
+  });
+});
+
+// ==================== WHATSAPP FUNCTIONS ====================
+
+async function sendOrderStatusUpdate(phoneNumber, orderNumber, status) {
+  const statusMessages = {
+    'Alındı': '✅ Siparişiniz alındı',
+    'Hazırlanıyor': '👨‍🍳 Siparişiniz hazırlanıyor',
+    'Yolda': '🚗 Siparişiniz yolda',
+    'Teslim Edildi': '🎉 Siparişiniz teslim edildi',
+    'İptal': '❌ Siparişiniz iptal edildi'
+  };
+  
+  const message = `${statusMessages[status]}\n\n📋 Sipariş No: ${orderNumber}`;
+  
+  await sendText(phoneNumber, message);
+}
+
 async function handleTextMessage(phoneNumber, text) {
   const state = userState.get(phoneNumber);
   
-  // Adres bekleniyor
   if (state === 'waiting_address') {
     userState.delete(phoneNumber);
     carts.set(phoneNumber + '_address', text);
@@ -87,7 +329,6 @@ async function handleTextMessage(phoneNumber, text) {
     return;
   }
   
-  // Normal mesajlar
   const lowerText = text.toLowerCase();
   
   if (lowerText.includes('merhaba') || lowerText.includes('selam')) {
@@ -99,7 +340,6 @@ async function handleTextMessage(phoneNumber, text) {
   }
 }
 
-// INTERACTIVE İŞLEYİCİ
 async function handleInteractive(phoneNumber, replyId) {
   console.log('Handler:', replyId);
   
@@ -114,6 +354,8 @@ async function handleInteractive(phoneNumber, replyId) {
   }
   
   if (replyId === 'business_lezzet' || replyId === 'business_burger' || replyId === 'business_pizza') {
+    // Save selected restaurant
+    carts.set(phoneNumber + '_restaurant', replyId);
     await sendCategories(phoneNumber);
     return;
   }
@@ -164,7 +406,6 @@ async function handleInteractive(phoneNumber, replyId) {
   await sendMainMenu(phoneNumber);
 }
 
-// SEPETE EKLE
 async function addToCart(phoneNumber, productId) {
   const products = {
     'prod_adana': { name: 'Adana Kebap', price: 150 },
@@ -197,7 +438,6 @@ async function addToCart(phoneNumber, productId) {
   await sendCartSummary(phoneNumber);
 }
 
-// SEPET ÖZETİ
 async function sendCartSummary(phoneNumber) {
   const cart = carts.get(phoneNumber) || [];
   
@@ -229,13 +469,11 @@ async function sendCartSummary(phoneNumber) {
   return await sendToWhatsApp(data);
 }
 
-// ADRES SOR
 async function askDeliveryAddress(phoneNumber) {
   userState.set(phoneNumber, 'waiting_address');
   await sendText(phoneNumber, '📍 *Teslimat Adresi*\n\nLütfen teslimat adresinizi yazın.\n\nÖrnek: Atatürk Cad. No:123 Daire:5 Beşiktaş/İstanbul');
 }
 
-// ÖDEME YÖNTEMİ
 async function selectPaymentMethod(phoneNumber) {
   const data = {
     messaging_product: 'whatsapp',
@@ -256,10 +494,10 @@ async function selectPaymentMethod(phoneNumber) {
   return await sendToWhatsApp(data);
 }
 
-// SİPARİŞ ONAYLA
 async function confirmOrder(phoneNumber, paymentId) {
   const cart = carts.get(phoneNumber) || [];
   const address = carts.get(phoneNumber + '_address') || 'Adres belirtilmedi';
+  const businessId = carts.get(phoneNumber + '_restaurant') || 'business_lezzet';
   
   const payments = { 'pay_cash': '💵 Nakit', 'pay_card': '💳 Kredi Kartı', 'pay_meal': '🎫 Yemek Kartı' };
   const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
@@ -274,6 +512,7 @@ async function confirmOrder(phoneNumber, paymentId) {
     address,
     payment: payments[paymentId],
     phone: phoneNumber,
+    businessId,
     timestamp: new Date().toISOString()
   });
   
@@ -296,23 +535,30 @@ async function confirmOrder(phoneNumber, paymentId) {
   return await sendToWhatsApp(data);
 }
 
-// SİPARİŞİ TAMAMLA
 async function finalizeOrder(phoneNumber) {
   const order = carts.get(phoneNumber + '_pending');
   if (!order) return;
   
-  orders.push({ ...order, status: 'Alındı', confirmedAt: new Date().toISOString() });
+  orders.push({ 
+    ...order, 
+    status: 'Alındı', 
+    confirmedAt: new Date().toISOString(),
+    statusHistory: [{
+      status: 'Alındı',
+      timestamp: new Date().toISOString()
+    }]
+  });
   
   carts.delete(phoneNumber);
   carts.delete(phoneNumber + '_address');
+  carts.delete(phoneNumber + '_restaurant');
   carts.delete(phoneNumber + '_pending');
   userState.delete(phoneNumber);
   
   await sendText(phoneNumber, `✅ *Siparişiniz alındı!*\n\n📋 No: ${order.orderNumber}\n⏱️ Tahmini: 30-45 dk\n\nTeşekkür ederiz! 🎉`);
-  console.log('✅ Order:', order.orderNumber);
+  console.log('✅ Order:', order.orderNumber, '- Business:', order.businessId);
 }
 
-// HELPER FUNCTIONS
 async function sendText(phoneNumber, text) {
   return await sendToWhatsApp({
     messaging_product: 'whatsapp',
@@ -335,7 +581,6 @@ async function sendToWhatsApp(data) {
   }
 }
 
-// MENU FUNCTIONS
 async function sendMainMenu(phoneNumber) {
   const data = {
     messaging_product: 'whatsapp',
@@ -459,88 +704,36 @@ async function sendProducts(phoneNumber, categoryId) {
   return await sendToWhatsApp(data);
 }
 
-// ADMIN PANEL
-app.get('/admin', (req, res) => {
-  const ordersHtml = orders.map(order => `
-    <div class="order">
-      <h3>📋 ${order.orderNumber}</h3>
-      <p><strong>Telefon:</strong> ${order.phone}</p>
-      <p><strong>Adres:</strong> ${order.address}</p>
-      <p><strong>Ödeme:</strong> ${order.payment}</p>
-      <p><strong>Toplam:</strong> ${order.total}₺</p>
-      <p><strong>Durum:</strong> ${order.status}</p>
-      <p><strong>Tarih:</strong> ${new Date(order.timestamp).toLocaleString('tr-TR')}</p>
-      <details>
-        <summary>Ürünler</summary>
-        <ul>
-          ${order.cart.map(item => `<li>${item.name} x${item.quantity} = ${item.price * item.quantity}₺</li>`).join('')}
-        </ul>
-      </details>
-    </div>
-  `).join('');
-  
+// ==================== HOME & ADMIN ====================
+
+app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Admin Panel - Siparişler</title>
+      <title>WhatsApp Bot</title>
       <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        h1 { color: #333; margin-bottom: 30px; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .stat-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .stat-card h3 { color: #666; font-size: 14px; margin-bottom: 10px; }
-        .stat-card .number { font-size: 32px; font-weight: bold; color: #4CAF50; }
-        .order { background: white; padding: 20px; margin-bottom: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .order h3 { color: #4CAF50; margin-bottom: 15px; }
-        .order p { margin: 8px 0; color: #555; }
-        details { margin-top: 15px; }
-        summary { cursor: pointer; color: #4CAF50; font-weight: bold; }
-        ul { margin-top: 10px; padding-left: 20px; }
-        li { margin: 5px 0; }
-        .no-orders { text-align: center; padding: 40px; color: #999; }
+        body { font-family: Arial; text-align: center; padding: 50px; background: #f5f5f5; }
+        h1 { color: #4CAF50; }
+        .status { background: white; padding: 20px; border-radius: 10px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
       </style>
     </head>
     <body>
-      <div class="container">
-        <h1>📊 Admin Panel - Sipariş Yönetimi</h1>
-        
-        <div class="stats">
-          <div class="stat-card">
-            <h3>Toplam Sipariş</h3>
-            <div class="number">${orders.length}</div>
-          </div>
-          <div class="stat-card">
-            <h3>Bugünkü Sipariş</h3>
-            <div class="number">${orders.filter(o => new Date(o.timestamp).toDateString() === new Date().toDateString()).length}</div>
-          </div>
-          <div class="stat-card">
-            <h3>Toplam Ciro</h3>
-            <div class="number">${orders.reduce((sum, o) => sum + o.total, 0)}₺</div>
-          </div>
-        </div>
-        
-        ${orders.length > 0 ? ordersHtml : '<div class="no-orders">Henüz sipariş yok</div>'}
+      <div class="status">
+        <h1>🚀 WhatsApp Bot Çalışıyor!</h1>
+        <p>✅ Admin API Aktif</p>
+        <p>✅ Sepet Sistemi Aktif</p>
+        <p>✅ CORS Aktif</p>
+        <p>✅ Subscription Sistemi Aktif</p>
       </div>
     </body>
     </html>
   `);
 });
 
-app.get('/', (req, res) => {
-  res.send(`
-    <h1>🚀 WhatsApp Bot Çalışıyor!</h1>
-    <p>✅ Sepet Sistemi Aktif</p>
-    <p>✅ Ödeme Seçenekleri Aktif</p>
-    <p><a href="/admin">📊 Admin Panel</a></p>
-  `);
-});
-
 app.listen(PORT, () => {
-  console.log(`🎉 Server: http://localhost:${PORT}`);
-  console.log(`📊 Admin: http://localhost:${PORT}/admin`);
+  console.log(`🎉 Server başladı: http://localhost:${PORT}`);
+  console.log(`📊 Toplam ${restaurants.length} restoran tanımlı`);
+  console.log(`✅ CORS aktif - Admin panel hazır!`);
 });
