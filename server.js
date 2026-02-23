@@ -5,6 +5,11 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 require('dotenv').config();
+// Interactive Messages modülünü import et
+const {
+  sendBusinessMainMenu,
+  sendFeaturedBusinesses,
+  sendCam
 
 // Interactive Messages modülünü import et (DRIVE VERSION)
 const {
@@ -297,4 +302,5 @@ app.listen(PORT, () => {
   console.log('💡 Server\'ı durdurmak için: Ctrl + C');
   console.log('═══════════════════════════════════════════');
   console.log('');
+
 });
