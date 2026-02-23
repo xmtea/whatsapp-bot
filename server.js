@@ -130,6 +130,39 @@ async function handleInteractiveReply(phoneNumber, replyId) {
       const productId = replyId.replace('prod_', '');
       await handleProductSelection(phoneNumber, productId);
     }
+    else if (replyId === 'cart_continue') {
+      // Alışverişe devam
+      await sendBusinessMainMenu(phoneNumber);
+    }
+    else if (replyId === 'cart_checkout') {
+      // Sipariş ver - Adres sor
+      await askDeliveryAddress(phoneNumber);
+    }
+    else if (replyId === 'cart_clear') {
+      // Sepeti boşalt
+      delete userCarts[phoneNumber];
+      await sendTextMessage(phoneNumber, '🗑️ Sepetiniz boşaltıldı.\n\n"Menü" yazarak yeni sipariş verebilirsiniz.');
+    }
+    else if (replyId.startsWith('payment_')) {
+      // Ödeme yöntemi seçildi
+      if (!userOrders[phoneNumber]) {
+        userOrders[phoneNumber] = {};
+      }
+      userOrders[phoneNumber].payment = replyId;
+      
+      // Sipariş özeti göster
+      await showOrderSummary(phoneNumber);
+    }
+    else if (replyId === 'order_confirm') {
+      // Siparişi onayla
+      await confirmOrder(phoneNumber);
+    }
+    else if (replyId === 'order_cancel' || replyId === 'address_cancel') {
+      // Sipariş iptal
+      delete userCarts[phoneNumber];
+      delete userOrders[phoneNumber];
+      await sendTextMessage(phoneNumber, '❌ Sipariş iptal edildi.\n\n"Menü" yazarak yeni sipariş verebilirsiniz.');
+    }
     else if (replyId === 'action_menu') {
       await sendBusinessMainMenu(phoneNumber);
     }
@@ -154,6 +187,12 @@ async function handleInteractiveReply(phoneNumber, replyId) {
 }
 
 // ============================================
+// SEPET YÖNETİMİ (In-Memory - Basit)
+// ============================================
+const userCarts = {}; // phoneNumber: [{product, quantity, price}]
+const userOrders = {}; // phoneNumber: {address, payment, cart, orderNo}
+
+// ============================================
 // ÜRÜN SEÇİMİ HANDLER
 // ============================================
 async function handleProductSelection(phoneNumber, productId) {
@@ -170,17 +209,311 @@ async function handleProductSelection(phoneNumber, productId) {
       return;
     }
     
-    // Ürün detayını göster
-    let detailText = `✅ *${product.name}*\n\n`;
-    detailText += `📝 ${product.description}\n\n`;
-    detailText += `💰 Fiyat: ${product.price}\n\n`;
-    detailText += `✨ Sepete eklendi!\n\n`;
-    detailText += `Başka ürün eklemek için "menü" yazın.`;
+    // Sepete ekle
+    if (!userCarts[phoneNumber]) {
+      userCarts[phoneNumber] = [];
+    }
     
-    await sendTextMessage(phoneNumber, detailText);
+    // Fiyatı parse et (250₺ → 250)
+    const price = parseInt(product.price.replace(/[^\d]/g, ''));
+    
+    // Aynı ürün varsa miktarı artır
+    const existingItem = userCarts[phoneNumber].find(item => item.id === product.id);
+    if (existingItem) {
+      existingItem.quantity += 1;
+    } else {
+      userCarts[phoneNumber].push({
+        id: product.id,
+        name: product.name,
+        price: price,
+        quantity: 1
+      });
+    }
+    
+    // Sepet özetini göster
+    await showCart(phoneNumber);
+    
   } catch (error) {
     console.error('❌ Ürün seçimi hatası:', error);
     await sendTextMessage(phoneNumber, '❌ Bir hata oluştu. Lütfen tekrar deneyin.');
+  }
+}
+
+// ============================================
+// SEPET GÖSTER (BUTTON MESSAGE)
+// ============================================
+async function showCart(phoneNumber) {
+  const cart = userCarts[phoneNumber] || [];
+  
+  if (cart.length === 0) {
+    await sendTextMessage(phoneNumber, '🛒 Sepetiniz boş.\n\n"Menü" yazarak alışverişe başlayın.');
+    return;
+  }
+  
+  // Sepet içeriği
+  const itemsText = cart.map(item => 
+    `• ${item.name} x${item.quantity} = ${item.price * item.quantity}₺`
+  ).join('\n');
+  
+  const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  
+  const data = {
+    messaging_product: 'whatsapp',
+    to: phoneNumber,
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      header: {
+        type: 'text',
+        text: '🛒 SEPETİNİZ'
+      },
+      body: {
+        text: `${itemsText}\n\n💰 Toplam: ${total}₺`
+      },
+      footer: {
+        text: `${cart.length} ürün`
+      },
+      action: {
+        buttons: [
+          {
+            type: 'reply',
+            reply: {
+              id: 'cart_continue',
+              title: '➕ Alışverişe Devam'
+            }
+          },
+          {
+            type: 'reply',
+            reply: {
+              id: 'cart_checkout',
+              title: '✅ Sipariş Ver'
+            }
+          },
+          {
+            type: 'reply',
+            reply: {
+              id: 'cart_clear',
+              title: '🗑️ Sepeti Boşalt'
+            }
+          }
+        ]
+      }
+    }
+  };
+  
+  await sendInteractiveMessage(data);
+}
+
+// ============================================
+// TESLİMAT ADRESİ SOR
+// ============================================
+async function askDeliveryAddress(phoneNumber) {
+  const data = {
+    messaging_product: 'whatsapp',
+    to: phoneNumber,
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      header: {
+        type: 'text',
+        text: '📍 Teslimat Adresi'
+      },
+      body: {
+        text: 'Lütfen teslimat adresinizi yazın.\n\nÖrnek: Atatürk Cad. No:123 Daire:5 Beşiktaş/İstanbul'
+      },
+      action: {
+        buttons: [
+          {
+            type: 'reply',
+            reply: {
+              id: 'address_cancel',
+              title: '❌ İptal'
+            }
+          }
+        ]
+      }
+    }
+  };
+  
+  // Kullanıcıyı "adres bekleniyor" moduna al
+  if (!userOrders[phoneNumber]) {
+    userOrders[phoneNumber] = {};
+  }
+  userOrders[phoneNumber].waitingFor = 'address';
+  
+  await sendInteractiveMessage(data);
+}
+
+// ============================================
+// ÖDEME YÖNTEMİ SOR (LIST MESSAGE)
+// ============================================
+async function askPaymentMethod(phoneNumber) {
+  const cart = userCarts[phoneNumber] || [];
+  const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  
+  const data = {
+    messaging_product: 'whatsapp',
+    to: phoneNumber,
+    type: 'interactive',
+    interactive: {
+      type: 'list',
+      header: {
+        type: 'text',
+        text: '💳 Ödeme Yöntemi'
+      },
+      body: {
+        text: `Nasıl ödeme yapmak istersiniz?\n\n💰 Toplam: ${total}₺`
+      },
+      footer: {
+        text: 'Güvenli ödeme'
+      },
+      action: {
+        button: 'Ödeme Seç',
+        sections: [
+          {
+            title: 'Ödeme Yöntemleri',
+            rows: [
+              {
+                id: 'payment_cash',
+                title: '💵 Nakit',
+                description: 'Kapıda nakit ödeme'
+              },
+              {
+                id: 'payment_card',
+                title: '💳 Kredi Kartı',
+                description: 'Online kart ödemesi'
+              },
+              {
+                id: 'payment_meal',
+                title: '🎫 Yemek Kartı',
+                description: 'Sodexo, Multinet vb.'
+              }
+            ]
+          }
+        ]
+      }
+    }
+  };
+  
+  await sendInteractiveMessage(data);
+}
+
+// ============================================
+// SİPARİŞ ÖZETİ GÖSTER (BUTTON MESSAGE)
+// ============================================
+async function showOrderSummary(phoneNumber) {
+  const order = userOrders[phoneNumber];
+  const cart = userCarts[phoneNumber] || [];
+  
+  if (!order || !order.address || !order.payment) {
+    await sendTextMessage(phoneNumber, '❌ Sipariş bilgileri eksik.');
+    return;
+  }
+  
+  // Sipariş numarası oluştur
+  const orderNo = `SIP-${Date.now().toString().slice(-6)}`;
+  order.orderNo = orderNo;
+  
+  // Sepet özeti
+  const itemsText = cart.map(item => 
+    `• ${item.name} x${item.quantity} - ${item.price * item.quantity}₺`
+  ).join('\n');
+  
+  const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  
+  const paymentText = {
+    'payment_cash': '💵 Nakit',
+    'payment_card': '💳 Kredi Kartı',
+    'payment_meal': '🎫 Yemek Kartı'
+  }[order.payment] || 'Nakit';
+  
+  const data = {
+    messaging_product: 'whatsapp',
+    to: phoneNumber,
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      header: {
+        type: 'text',
+        text: '📦 SİPARİŞ ÖZETİ'
+      },
+      body: {
+        text: `${itemsText}\n\n` +
+              `📍 Adres: ${order.address}\n\n` +
+              `💳 Ödeme: ${paymentText}\n\n` +
+              `💰 Toplam: ${total}₺\n` +
+              `📋 No: ${orderNo}`
+      },
+      footer: {
+        text: 'Siparişi onaylıyor musunuz?'
+      },
+      action: {
+        buttons: [
+          {
+            type: 'reply',
+            reply: {
+              id: 'order_confirm',
+              title: '✅ Onayla'
+            }
+          },
+          {
+            type: 'reply',
+            reply: {
+              id: 'order_cancel',
+              title: '❌ İptal'
+            }
+          }
+        ]
+      }
+    }
+  };
+  
+  await sendInteractiveMessage(data);
+}
+
+// ============================================
+// SİPARİŞ ONAYLA
+// ============================================
+async function confirmOrder(phoneNumber) {
+  const order = userOrders[phoneNumber];
+  
+  if (!order || !order.orderNo) {
+    await sendTextMessage(phoneNumber, '❌ Sipariş bulunamadı.');
+    return;
+  }
+  
+  const confirmText = `✅ *Siparişiniz alındı!*\n\n` +
+                     `📋 No: ${order.orderNo}\n` +
+                     `⏱️ Tahmini: 30-45 dk\n\n` +
+                     `Teşekkür ederiz! 🙏`;
+  
+  await sendTextMessage(phoneNumber, confirmText);
+  
+  // Sepeti ve siparişi temizle
+  delete userCarts[phoneNumber];
+  delete userOrders[phoneNumber];
+}
+
+// ============================================
+// INTERACTIVE MESSAGE HELPER
+// ============================================
+async function sendInteractiveMessage(data) {
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+      data,
+      {
+        headers: {
+          'Authorization': `Bearer ${ACCESS_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    console.log('✅ Interactive mesaj gönderildi');
+    return response.data;
+  } catch (error) {
+    console.error('❌ Interactive mesaj hatası:', error.response?.data || error.message);
+    throw error;
   }
 }
 
@@ -191,6 +524,18 @@ async function handleTextMessage(phoneNumber, text) {
   console.log('🤖 Mesaj işleniyor:', text);
   
   try {
+    // Adres bekleniyor mu kontrol et
+    if (userOrders[phoneNumber]?.waitingFor === 'address') {
+      // Adresi kaydet
+      userOrders[phoneNumber].address = text;
+      userOrders[phoneNumber].waitingFor = null;
+      
+      // Ödeme yöntemi sor
+      await askPaymentMethod(phoneNumber);
+      return;
+    }
+    
+    // Normal komutlar
     if (text.includes('merhaba') || text.includes('selam') || text.includes('hi') || text.includes('hello')) {
       await sendBusinessMainMenu(phoneNumber);
     }
@@ -209,6 +554,9 @@ async function handleTextMessage(phoneNumber, text) {
     else if (text.includes('restoran') || text.includes('restaurant')) {
       await sendBusinessList(phoneNumber);
     }
+    else if (text.includes('sepet') || text.includes('cart')) {
+      await showCart(phoneNumber);
+    }
     else if (text.includes('yardım') || text.includes('help')) {
       await sendTextMessage(phoneNumber,
         'ℹ️ *YARDIM*\n\n' +
@@ -216,7 +564,8 @@ async function handleTextMessage(phoneNumber, text) {
         '• "merhaba" - Ana menü\n' +
         '• "sipariş" - Sipariş ver\n' +
         '• "kampanya" - İndirimli yerler\n' +
-        '• "restoran" - Tüm restoranlar\n\n' +
+        '• "restoran" - Tüm restoranlar\n' +
+        '• "sepet" - Sepeti görüntüle\n\n' +
         'İyi günler! 😊'
       );
     }
