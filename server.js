@@ -5,13 +5,8 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 require('dotenv').config();
-// Interactive Messages modülünü import et
-const {
-  sendBusinessMainMenu,
-  sendFeaturedBusinesses,
-  sendCam
 
-// Interactive Messages modülünü import et (DRIVE VERSION)
+// Interactive Messages modülünü import et
 const {
   sendBusinessMainMenu,
   sendFeaturedBusinesses,
@@ -23,7 +18,7 @@ const {
   sendPaymentMethods,
   sendOrderConfirmation,
   sendTextMessage
-} = require('./interactive-messages-DRIVE');
+} = require('./interactive-messages');
 
 const app = express();
 app.use(bodyParser.json());
@@ -304,3 +299,4 @@ app.listen(PORT, () => {
   console.log('');
 
 });
+
