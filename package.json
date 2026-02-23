@@ -4,7 +4,7 @@
   "description": "Menüm Yanımda WhatsApp Bot",
   "main": "server-fixed.js",
   "scripts": {
-    "start": "node server-fixed.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
