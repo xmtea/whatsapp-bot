@@ -1,4 +1,4 @@
-// WhatsApp Business API - Backend Server v2.1
+// WhatsApp Business API - Backend Server
 // MenuMyAnimda - Restoran Sipariş Sistemi
 
 const express = require('express');
@@ -6,7 +6,7 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 require('dotenv').config();
 
-// Interactive Messages modülünü import et
+// Interactive Messages modülünü import et (DRIVE VERSION)
 const {
   sendBusinessMainMenu,
   sendFeaturedBusinesses,
@@ -125,6 +125,11 @@ async function handleInteractiveReply(phoneNumber, replyId) {
       const category = replyId.replace('cat_', '');
       await sendProductList(phoneNumber, category);
     }
+    else if (replyId.startsWith('prod_')) {
+      // Ürün seçildi
+      const productId = replyId.replace('prod_', '');
+      await handleProductSelection(phoneNumber, productId);
+    }
     else if (replyId === 'action_menu') {
       await sendBusinessMainMenu(phoneNumber);
     }
@@ -144,6 +149,37 @@ async function handleInteractiveReply(phoneNumber, replyId) {
     }
   } catch (error) {
     console.error('❌ Interactive reply hatası:', error);
+    await sendTextMessage(phoneNumber, '❌ Bir hata oluştu. Lütfen tekrar deneyin.');
+  }
+}
+
+// ============================================
+// ÜRÜN SEÇİMİ HANDLER
+// ============================================
+async function handleProductSelection(phoneNumber, productId) {
+  try {
+    const { getMenuFromDrive } = require('./interactive-messages-DRIVE');
+    const menu = await getMenuFromDrive();
+    
+    // Tüm ürünleri tek bir array'de topla
+    const allProducts = Object.values(menu.products).flat();
+    const product = allProducts.find(p => p.id === productId);
+    
+    if (!product) {
+      await sendTextMessage(phoneNumber, '❌ Ürün bulunamadı.');
+      return;
+    }
+    
+    // Ürün detayını göster
+    let detailText = `✅ *${product.name}*\n\n`;
+    detailText += `📝 ${product.description}\n\n`;
+    detailText += `💰 Fiyat: ${product.price}\n\n`;
+    detailText += `✨ Sepete eklendi!\n\n`;
+    detailText += `Başka ürün eklemek için "menü" yazın.`;
+    
+    await sendTextMessage(phoneNumber, detailText);
+  } catch (error) {
+    console.error('❌ Ürün seçimi hatası:', error);
     await sendTextMessage(phoneNumber, '❌ Bir hata oluştu. Lütfen tekrar deneyin.');
   }
 }
@@ -297,8 +333,4 @@ app.listen(PORT, () => {
   console.log('💡 Server\'ı durdurmak için: Ctrl + C');
   console.log('═══════════════════════════════════════════');
   console.log('');
-
 });
-
-
-
